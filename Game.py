@@ -8,8 +8,12 @@ Algorithms supported:
   2. Heuristic: Greedy Best-First, A*
   3. Local Search: Hill Climbing, Simulated Annealing, Genetic Algorithm
 
-The problem model (grid, actions, step costs, goal test) lives in problem.py,
-so the animation and the experimental results use exactly the same problem.
+Features:
+  - Custom image support: drop your own PNG into assets/agent.png (or agent.png)
+    and assets/goal.png (or goal.png).
+  - Animated walk: after a solution path is found, the agent icon/sprite smoothly
+    walks along the entire path to the goal.
+  - Replay walk button: click "Walk" anytime to replay the agent traversing the path.
 
 UI: clean dark desktop-style dashboard (cards, status pill, stat tiles).
 """
@@ -17,6 +21,7 @@ UI: clean dark desktop-style dashboard (cards, status pill, stat tiles).
 import ctypes
 import heapq
 import math
+import os
 import random
 import sys
 import time
@@ -82,14 +87,14 @@ tiny = pygame.font.SysFont(FONT_NAMES, 12)
 heading = pygame.font.SysFont(FONT_NAMES, 17, bold=True)
 title_font = pygame.font.SysFont(FONT_NAMES, 26, bold=True)
 number_font = pygame.font.SysFont(FONT_NAMES, 22, bold=True)
-button_font = pygame.font.SysFont(FONT_NAMES, 14, bold=True)
+button_font = pygame.font.SysFont(FONT_NAMES, 13, bold=True)
 algo_btn_font = pygame.font.SysFont(FONT_NAMES, 12, bold=True)
 
 START = problem.get_initial_state()
 
 
 # ---------------------------------------------------------------------
-# Layout (everything is derived from a few numbers so nothing overlaps)
+# Layout (derived from window dimensions)
 # ---------------------------------------------------------------------
 
 HEADER_H = 80
@@ -142,8 +147,8 @@ ALGO_RECTS.update(UNINFORMED_RECTS)
 ALGO_RECTS.update(HEURISTIC_RECTS)
 ALGO_RECTS.update(LOCAL_RECTS)
 
-# Section 2: controls
-PLAY_RECT, PAUSE_RECT, RESET_RECT = split_row(3, SIDE_Y + 138, 34)
+# Section 2: controls (Play, Pause, Walk, Reset)
+PLAY_RECT, PAUSE_RECT, WALK_RECT, RESET_RECT = split_row(4, SIDE_Y + 138, 34)
 
 # Section 3: speed
 SPEED_Y = SIDE_Y + 182
@@ -161,6 +166,61 @@ DETAILS_Y = SOLUTION_Y + 28
 
 
 # ---------------------------------------------------------------------
+# Sprites & Custom Image Loader
+# ---------------------------------------------------------------------
+
+AGENT_CANDIDATES = [
+    "assets/agent.png",
+    "assets/player.png",
+    "assets/character.png",
+    "assets/icon.png",
+    "agent.png",
+    "player.png",
+    "character.png",
+]
+
+GOAL_CANDIDATES = [
+    "assets/goal.png",
+    "assets/treasure.png",
+    "assets/exit.png",
+    "goal.png",
+    "treasure.png",
+    "exit.png",
+]
+
+agent_sprite = None
+goal_sprite = None
+agent_mini = None
+goal_mini = None
+
+
+def load_sprite(candidates, size):
+    """Loads and smoothly scales the first found candidate image."""
+    for path_str in candidates:
+        if os.path.isfile(path_str):
+            try:
+                surf = pygame.image.load(path_str).convert_alpha()
+                return pygame.transform.smoothscale(surf, size)
+            except Exception as e:
+                print(f"Error loading image {path_str}: {e}")
+    return None
+
+
+def reload_sprites():
+    global agent_sprite, goal_sprite, agent_mini, goal_mini
+    size = (max(8, CELL), max(8, CELL))
+    agent_sprite = load_sprite(AGENT_CANDIDATES, size)
+    goal_sprite = load_sprite(GOAL_CANDIDATES, size)
+    if agent_sprite:
+        agent_mini = pygame.transform.smoothscale(agent_sprite, (14, 14))
+    if goal_sprite:
+        goal_mini = pygame.transform.smoothscale(goal_sprite, (14, 14))
+
+
+reload_sprites()
+
+
+# ---------------------------------------------------------------------
 # Game state
 # ---------------------------------------------------------------------
 
@@ -173,6 +233,11 @@ running_search = False
 paused = False
 search_finished = False
 error_message = None
+
+# Animated walk state
+agent_walking = False
+agent_path_index = 0
+walk_progress = 0.0
 
 nodes_expanded = 0
 nodes_generated = 0
@@ -199,7 +264,7 @@ def h_manhattan(state):
 
 
 def emit(state):
-    """Yield a frame only on the first visit to a cell (keeps visualizer smooth)."""
+    """Yield a frame only on the first visit to a cell."""
     coord = cell_of(state)
     if coord in yielded_cells:
         return False
@@ -240,6 +305,7 @@ def reset_search():
     global nodes_expanded, nodes_generated, frontier_size, max_frontier
     global path_cost, execution_time
     global explored, path, yielded_cells, search_generator
+    global agent_walking, agent_path_index, walk_progress
 
     running_search = False
     paused = False
@@ -255,6 +321,9 @@ def reset_search():
     path = []
     yielded_cells = set()
     search_generator = None
+    agent_walking = False
+    agent_path_index = 0
+    walk_progress = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -680,6 +749,7 @@ def start_search():
 def update_search():
     global path, path_cost, execution_time
     global search_finished, running_search, error_message
+    global agent_walking, agent_path_index, walk_progress
 
     if not running_search or paused or search_finished:
         return
@@ -695,12 +765,39 @@ def update_search():
             execution_time = time.perf_counter() - search_start_time
             search_finished = True
             running_search = False
+
+            # Automatically start walking along the discovered path to the goal
+            if path:
+                agent_walking = True
+                agent_path_index = 0
+                walk_progress = 0.0
             break
         except Exception as exc:
             error_message = str(exc)
             search_finished = True
             running_search = False
             break
+
+
+def update_agent_walk():
+    """Smoothly moves the agent icon/sprite along the path to the exit."""
+    global agent_walking, agent_path_index, walk_progress
+
+    if not agent_walking or paused or not path or len(path) <= 1:
+        return
+
+    # Walking speed scales with the user speed setting
+    speed = max(0.15, min(1.2, steps_per_frame * 0.10))
+    walk_progress += speed
+
+    if walk_progress >= 1.0:
+        advance = int(walk_progress)
+        agent_path_index = min(len(path) - 1, agent_path_index + advance)
+        walk_progress -= advance
+
+        if agent_path_index >= len(path) - 1:
+            agent_walking = False
+            walk_progress = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -743,7 +840,7 @@ def separator(y):
 
 
 # ---------------------------------------------------------------------
-# Maze
+# Maze & Character rendering
 # ---------------------------------------------------------------------
 
 def cell_center(row, col):
@@ -782,27 +879,58 @@ def draw_maze():
 
     radius = max(4, min(10, CELL // 2 - 1))
 
-    start = cell_center(*cell_of(START))
-    pygame.draw.circle(screen, GREEN, start, radius)
-    pygame.draw.circle(screen, (255, 255, 255), start, radius, 2)
+    # 1. Goal (Custom sprite or glowing star/circle)
+    goal_center = cell_center(*problem.exit_pos)
+    if goal_sprite:
+        screen.blit(
+            goal_sprite,
+            (GRID_X + problem.exit_pos[1] * CELL, GRID_Y + problem.exit_pos[0] * CELL),
+        )
+    else:
+        pygame.draw.circle(screen, ORANGE, goal_center, radius)
+        pygame.draw.circle(screen, (255, 255, 255), goal_center, radius, 2)
 
-    goal = cell_center(*problem.exit_pos)
-    pygame.draw.circle(screen, ORANGE, goal, radius)
-    pygame.draw.circle(screen, (255, 255, 255), goal, radius, 2)
+    # 2. Start marker (always visible)
+    start_center = cell_center(*cell_of(START))
+    pygame.draw.circle(screen, GREEN, start_center, max(3, radius - 2))
+    pygame.draw.circle(screen, (255, 255, 255), start_center, max(3, radius - 2), 1)
 
-    if running_search and explored:
-        current = cell_center(*cell_of(explored[-1]))
-        r = max(3, radius - 3)
-        pygame.draw.circle(screen, RED, current, r)
-        pygame.draw.circle(screen, (255, 255, 255), current, r, 2)
+    # 3. Determine Agent Position (during idle, exploring, or walking along path)
+    if path:
+        if agent_walking and len(path) > 1 and agent_path_index < len(path) - 1:
+            s0 = path[agent_path_index]
+            s1 = path[agent_path_index + 1]
+            r = s0[0] + (s1[0] - s0[0]) * walk_progress
+            c = s0[1] + (s1[1] - s0[1]) * walk_progress
+            agent_cx = GRID_X + c * CELL + CELL / 2.0
+            agent_cy = GRID_Y + r * CELL + CELL / 2.0
+        else:
+            target_idx = min(agent_path_index, len(path) - 1)
+            agent_cx, agent_cy = cell_center(*cell_of(path[target_idx]))
+    elif running_search and explored:
+        # During exploration: the agent sprite IS the active explorer traversing the maze
+        agent_cx, agent_cy = cell_center(*cell_of(explored[-1]))
+    else:
+        # Idle at start
+        agent_cx, agent_cy = cell_center(*cell_of(START))
+
+    # 4. Render the Agent (Image sprite ALWAYS takes priority over the icon!)
+    if agent_sprite:
+        screen.blit(
+            agent_sprite,
+            (int(agent_cx - CELL / 2.0), int(agent_cy - CELL / 2.0)),
+        )
+    else:
+        color = RED if running_search else CYAN
+        pygame.draw.circle(screen, color, (int(agent_cx), int(agent_cy)), radius)
+        pygame.draw.circle(screen, (255, 255, 255), (int(agent_cx), int(agent_cy)), radius, 2)
 
 
 def draw_legend():
     y = GRID_Y + GRID_H + 18
     entries = [
-        ("dot", GREEN, "Start"),
-        ("dot", ORANGE, "Goal"),
-        ("dot", RED, "Current"),
+        ("agent", CYAN, "Agent"),
+        ("goal", ORANGE, "Goal"),
         ("box", blend(FLOOR, EXPLORED, 0.5), "Explored"),
         ("box", PATH, "Path"),
         ("box", SAND, "Sand (3)"),
@@ -816,11 +944,17 @@ def draw_legend():
         if x + item_w > limit and x != GRID_X:
             x = GRID_X
             y += 22
-        if kind == "dot":
+
+        if kind == "agent" and agent_mini:
+            screen.blit(agent_mini, (x, y + 1))
+        elif kind == "goal" and goal_mini:
+            screen.blit(goal_mini, (x, y + 1))
+        elif kind in ("agent", "goal"):
             pygame.draw.circle(screen, color, (x + 6, y + 8), 6)
         else:
             pygame.draw.rect(screen, color, (x, y + 2, 13, 13), border_radius=3)
             pygame.draw.rect(screen, GRID_LINE, (x, y + 2, 13, 13), 1, border_radius=3)
+
         draw_text(label, x + 20, y, MUTED, tiny)
         x += item_w
 
@@ -836,14 +970,18 @@ def draw_header():
     draw_text("Treasure Hunt", MARGIN, 12, TEXT, title_font)
     draw_text("Uninformed, Heuristic & Local Search Visualizer", MARGIN + 2, 46, MUTED, small)
 
-    if running_search and paused:
+    if agent_walking:
+        status, status_color = "Walking to Goal", CYAN
+    elif running_search and paused:
         status, status_color = "Paused", ORANGE
     elif running_search:
         status, status_color = "Searching", BLUE
     elif search_finished and error_message:
         status, status_color = "Error", RED
+    elif search_finished and path and agent_path_index >= len(path) - 1:
+        status, status_color = "Goal Reached!", GREEN
     elif search_finished and path:
-        status, status_color = "Goal reached", GREEN
+        status, status_color = "Path Found", GREEN
     elif search_finished:
         status, status_color = "No solution", RED
     else:
@@ -870,9 +1008,11 @@ def draw_right_panel():
         else:
             button(name, rect, NEUTRAL, TEXT, face=algo_btn_font)
 
-    # Section 2: Main controls
+    # Section 2: Main controls (Play, Pause, Walk, Reset)
     button("Play", PLAY_RECT, GREEN, (255, 255, 255), enabled=not running_search)
-    button("Resume" if paused else "Pause", PAUSE_RECT, ORANGE, (255, 255, 255), enabled=running_search)
+    button("Resume" if paused else "Pause", PAUSE_RECT, ORANGE, (255, 255, 255),
+           enabled=(running_search or agent_walking))
+    button("Walk", WALK_RECT, CYAN, (255, 255, 255), enabled=(bool(path) and not running_search))
     button("Reset", RESET_RECT, RED, (255, 255, 255))
 
     # Section 3: Speed control
@@ -926,6 +1066,8 @@ def draw_right_panel():
         msg_y = SIDE_Y + SIDE_H - 30
         if error_message:
             draw_text("Error: " + error_message[:45], INNER_X, msg_y, RED, small)
+        elif agent_walking:
+            draw_text("Agent walking along path...", INNER_X, msg_y, CYAN, small)
         elif path:
             draw_text("The exit has been reached.", INNER_X, msg_y, GREEN, small)
         else:
@@ -938,6 +1080,7 @@ def draw_right_panel():
 
 def main():
     global algorithm, paused, steps_per_frame
+    global agent_walking, agent_path_index, walk_progress
 
     running = True
     while running:
@@ -957,8 +1100,13 @@ def main():
 
                 if PLAY_RECT.collidepoint(pos) and not running_search:
                     start_search()
-                elif PAUSE_RECT.collidepoint(pos) and running_search:
+                elif PAUSE_RECT.collidepoint(pos) and (running_search or agent_walking):
                     paused = not paused
+                elif WALK_RECT.collidepoint(pos) and path:
+                    agent_walking = True
+                    agent_path_index = 0
+                    walk_progress = 0.0
+                    paused = False
                 elif RESET_RECT.collidepoint(pos):
                     reset_search()
                 elif MINUS_RECT.collidepoint(pos):
@@ -967,14 +1115,21 @@ def main():
                     steps_per_frame = min(40, steps_per_frame + 1)
 
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE and running_search:
-                    paused = not paused
+                if event.key == pygame.K_SPACE:
+                    if running_search or agent_walking:
+                        paused = not paused
+                elif event.key in (pygame.K_w, pygame.K_RETURN) and path and not running_search:
+                    agent_walking = True
+                    agent_path_index = 0
+                    walk_progress = 0.0
+                    paused = False
                 elif event.key == pygame.K_UP:
                     steps_per_frame = min(40, steps_per_frame + 1)
                 elif event.key == pygame.K_DOWN:
                     steps_per_frame = max(1, steps_per_frame - 1)
 
         update_search()
+        update_agent_walk()
 
         screen.fill(BG)
         draw_header()
