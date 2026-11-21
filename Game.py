@@ -45,6 +45,8 @@ NEUTRAL = (38, 44, 55)
 TILE_BG = (32, 38, 49)
 
 FLOOR = (34, 40, 51)
+SAND = (179, 139, 66)      # Sand - Cost 3
+MUD = (133, 91, 69)        # Mud - Cost 5
 WALL = (10, 13, 18)
 GRID_LINE = (46, 53, 66)
 EXPLORED = (70, 130, 200)
@@ -52,10 +54,21 @@ PATH = (52, 190, 150)
 PATH_LINE = (110, 236, 196)
 
 TERRAIN_COLORS = {
-    ".": FLOOR, "P": FLOOR, "E": FLOOR,
-    "K": FLOOR, "D": FLOOR,
-    "0": FLOOR, "1": FLOOR, "2": FLOOR, "3": FLOOR,
-    "S": FLOOR, "M": FLOOR, "#": WALL,
+    ".": FLOOR,
+    "P": FLOOR,
+    "E": FLOOR,
+    "K": FLOOR,
+    "D": FLOOR,
+
+    "0": FLOOR,
+    "1": FLOOR,
+    "2": FLOOR,
+    "3": FLOOR,
+
+    "S": SAND,
+    "M": MUD,
+
+    "#": WALL,
 }
 
 ALGORITHMS = {"BFS": bfs, "DFS": dfs, "UCS": ucs, "IDS": ids}
