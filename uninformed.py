@@ -1,17 +1,28 @@
 """
 uninformed.py
-From-scratch implementations of uninformed search algorithms:
-BFS, DFS, UCS, and IDS.
 
-All algorithms use the same problem interface:
-    get_initial_state()
-    is_goal(state)
-    get_successors(state)
+From-scratch implementations of the four uninformed search algorithms used in
+CSAI 301 Phase I:
 
-Optional trace callback:
+    bfs  - Breadth-First Search
+    dfs  - Depth-First Search
+    ucs  - Uniform-Cost Search
+    ids  - Iterative Deepening Search
+
+All algorithms share the same problem interface:
+
+    problem.get_initial_state()
+    problem.is_goal(state)
+    problem.get_successors(state)   -> (action, next_state, step_cost)
+
+Each function returns a dictionary with the solution path and the measured
+metrics (nodes generated/expanded, peak frontier size, running time, and a
+per-coordinate visit count used by the visualisation).
+
+An optional trace callback may be supplied:
+
     trace(state, expanded_count, frontier_size)
 """
-
 
 from collections import deque
 import heapq
@@ -30,9 +41,8 @@ def _build_result(
     start_time,
     visited_coords,
 ):
-    """Build a standardized result dictionary."""
+    """Assemble the standard result dictionary used by every algorithm."""
     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-
     return {
         "algorithm": algorithm,
         "found": found,
@@ -49,9 +59,12 @@ def _build_result(
 
 def bfs(problem, trace=None):
     """
-    Breadth-First Search.
-    Complete and optimal in number of steps when all actions have equal cost.
-    It is not guaranteed to minimize weighted path cost.
+    Breadth-First Search using a FIFO queue.
+
+    Explores states in non-decreasing depth order. Complete and optimal in the
+    number of steps, but not guaranteed to minimise weighted path cost.
+
+    Returns the standard result dictionary.
     """
     start_time = time.perf_counter()
     initial_state = problem.get_initial_state()
@@ -79,12 +92,11 @@ def bfs(problem, trace=None):
             return _build_result(
                 "BFS", True, actions, states, cost,
                 nodes_generated, nodes_expanded, max_frontier_size,
-                start_time, visited_coords
+                start_time, visited_coords,
             )
 
         for action, next_state, step_cost in problem.get_successors(state):
             nodes_generated += 1
-
             if next_state not in discovered:
                 discovered.add(next_state)
                 frontier.append((
@@ -97,15 +109,19 @@ def bfs(problem, trace=None):
     return _build_result(
         "BFS", False, [], [], 0,
         nodes_generated, nodes_expanded, max_frontier_size,
-        start_time, visited_coords
+        start_time, visited_coords,
     )
 
 
 def dfs(problem, trace=None):
     """
-    Depth-First Search.
-    Complete on this finite state space, but not optimal.
-    States are marked discovered when pushed to avoid duplicate stack entries.
+    Depth-First Search using a LIFO stack.
+
+    States are marked as discovered when pushed, which prevents duplicate stack
+    entries and guarantees termination on this finite state space. Complete on
+    finite graphs, but not optimal.
+
+    Returns the standard result dictionary.
     """
     start_time = time.perf_counter()
     initial_state = problem.get_initial_state()
@@ -131,33 +147,29 @@ def dfs(problem, trace=None):
             trace(state, nodes_expanded, len(frontier))
 
         if problem.is_goal(state):
+            # Rebuild the path from the parent pointers stored during expansion.
             path_states = [state]
             path_actions = []
             path_cost = 0
             current = state
-
             while current != initial_state:
                 previous, action, step_cost = parent[current]
                 path_actions.append(action)
                 path_cost += step_cost
                 path_states.append(previous)
                 current = previous
-
             path_states.reverse()
             path_actions.reverse()
 
             return _build_result(
                 "DFS", True, path_actions, path_states, path_cost,
                 nodes_generated, nodes_expanded, max_frontier_size,
-                start_time, visited_coords
+                start_time, visited_coords,
             )
 
-        # Reverse so UP is the first successor removed from the LIFO stack.
-        for action, next_state, step_cost in reversed(
-            problem.get_successors(state)
-        ):
+        # Reverse the successors so UP is the first one popped from the stack.
+        for action, next_state, step_cost in reversed(problem.get_successors(state)):
             nodes_generated += 1
-
             if next_state not in discovered:
                 discovered.add(next_state)
                 parent[next_state] = (state, action, step_cost)
@@ -166,14 +178,19 @@ def dfs(problem, trace=None):
     return _build_result(
         "DFS", False, [], [], 0,
         nodes_generated, nodes_expanded, max_frontier_size,
-        start_time, visited_coords
+        start_time, visited_coords,
     )
 
 
 def ucs(problem, trace=None):
     """
     Uniform-Cost Search (Dijkstra's algorithm on the implicit state graph).
-    Complete and optimal for positive step costs.
+
+    The frontier is a min-heap ordered by cumulative path cost g(n). Outdated
+    heap entries are skipped when a cheaper route to that state was already
+    found. Complete and optimal for positive step costs.
+
+    Returns the standard result dictionary.
     """
     start_time = time.perf_counter()
     initial_state = problem.get_initial_state()
@@ -191,7 +208,6 @@ def ucs(problem, trace=None):
         max_frontier_size = max(max_frontier_size, len(frontier))
         cost, _tie_breaker, state, actions, states = heapq.heappop(frontier)
 
-        # Ignore outdated entries in the priority queue.
         if cost > best_cost.get(state, float("inf")):
             continue
 
@@ -206,39 +222,43 @@ def ucs(problem, trace=None):
             return _build_result(
                 "UCS", True, actions, states, cost,
                 nodes_generated, nodes_expanded, max_frontier_size,
-                start_time, visited_coords
+                start_time, visited_coords,
             )
 
         for action, next_state, step_cost in problem.get_successors(state):
             nodes_generated += 1
             new_cost = cost + step_cost
-
             if new_cost < best_cost.get(next_state, float("inf")):
                 best_cost[next_state] = new_cost
                 counter += 1
                 heapq.heappush(
                     frontier,
-                    (
-                        new_cost,
-                        counter,
-                        next_state,
-                        actions + [action],
-                        states + [next_state],
-                    ),
+                    (new_cost, counter, next_state,
+                     actions + [action], states + [next_state]),
                 )
 
     return _build_result(
         "UCS", False, [], [], 0,
         nodes_generated, nodes_expanded, max_frontier_size,
-        start_time, visited_coords
+        start_time, visited_coords,
     )
 
 
 def ids(problem, max_depth=250, trace=None):
     """
     Iterative Deepening Search.
-    Repeats depth-limited DFS with increasing limits.
-    Optimal in number of steps for unit-step depth, not weighted path cost.
+
+    Repeatedly runs depth-limited DFS with increasing depth limits. Within each
+    iteration, a state is re-expanded only if a shallower route to it is found,
+    which prevents cycles while preserving minimum-step optimality.
+
+    Args:
+        problem: the TreasureHuntProblem instance.
+        max_depth: safety cap on the depth limit.
+        trace: optional callback trace(state, expanded_count, frontier_size).
+
+    Returns the standard result dictionary with totals accumulated over all
+    depth-limited iterations.
     """
     start_time = time.perf_counter()
     initial_state = problem.get_initial_state()
@@ -268,7 +288,7 @@ def ids(problem, max_depth=250, trace=None):
                 return _build_result(
                     "IDS", True, actions, states, cost,
                     total_nodes_generated, total_nodes_expanded,
-                    overall_max_frontier, start_time, visited_coords
+                    overall_max_frontier, start_time, visited_coords,
                 )
 
             if depth < depth_limit:
@@ -277,10 +297,7 @@ def ids(problem, max_depth=250, trace=None):
                 ):
                     total_nodes_generated += 1
                     next_depth = depth + 1
-
-                    if next_depth < min_depth_in_iter.get(
-                        next_state, float("inf")
-                    ):
+                    if next_depth < min_depth_in_iter.get(next_state, float("inf")):
                         min_depth_in_iter[next_state] = next_depth
                         stack.append((
                             next_state,
@@ -293,5 +310,5 @@ def ids(problem, max_depth=250, trace=None):
     return _build_result(
         "IDS", False, [], [], 0,
         total_nodes_generated, total_nodes_expanded,
-        overall_max_frontier, start_time, visited_coords
+        overall_max_frontier, start_time, visited_coords,
     )

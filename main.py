@@ -1,8 +1,17 @@
 """
 main.py
-Entry point for CSAI 301 Phase I experiments.
-Runs BFS, DFS, UCS, and IDS on the updated Treasure Hunt Problem,
-prints metrics, exports results to CSV, and generates visualization charts.
+
+Entry point for the CSAI 301 Phase I experiments.
+
+Runs the four uninformed search algorithms (BFS, DFS, UCS, IDS) on the
+Treasure Hunt problem, prints a comparison table to the terminal, and writes
+three deliverables to results/:
+
+    phase1_metrics.csv     - measured performance of each algorithm
+    explored_paths.png     - explored cells and solution path per algorithm
+    metrics_comparison.png - bar charts comparing the four algorithms
+
+Run with:  python main.py
 """
 
 import csv
@@ -14,7 +23,13 @@ from visualizer import plot_explored_and_paths, plot_metrics_comparison
 
 
 def export_csv(results, filepath="results/phase1_metrics.csv"):
-    """Write experimental metrics to a CSV file."""
+    """
+    Write the measured metrics to a CSV file for the report tables.
+
+    Args:
+        results: list of result dictionaries returned by the search algorithms.
+        filepath: destination path; parent directories are created if needed.
+    """
     directory = os.path.dirname(filepath)
     if directory:
         os.makedirs(directory, exist_ok=True)
@@ -48,9 +63,11 @@ def export_csv(results, filepath="results/phase1_metrics.csv"):
 
 
 def main():
+    """Run the full Phase I experiment and produce all output files."""
     problem = TreasureHuntProblem()
     stats = problem.get_state_space_stats()
 
+    # Describe the formal model before showing the search results.
     print("=" * 72)
     print("CSAI 301 - PHASE I: TREASURE HUNT PROBLEM & STATE SPACE")
     print("=" * 72)
@@ -66,13 +83,12 @@ def main():
         f"Theoretical State Bound: {stats['theoretical_states']} states "
         "(one position-based state per walkable cell)"
     )
-    print(
-        f"Exact Reachable States : {stats['reachable_states']} states"
-    )
+    print(f"Exact Reachable States : {stats['reachable_states']} states")
     print(f"Initial State         : {problem.get_initial_state()}")
     print(f"Exit Position         : {problem.exit_pos}")
     print("=" * 72)
 
+    # Every algorithm solves the same problem instance.
     algorithms = [bfs, dfs, ucs, ids]
     results = [algorithm(problem) for algorithm in algorithms]
 
@@ -96,6 +112,7 @@ def main():
             f"{result['execution_time_ms']:<9.3f}"
         )
 
+    # The cheapest successful run is the cost-optimal reference (UCS).
     successful_results = [r for r in results if r["found"]]
     if successful_results:
         optimal_cost = min(r["path_cost"] for r in successful_results)
@@ -104,9 +121,7 @@ def main():
             "BFS and IDS are optimal in number of steps; UCS is optimal in "
             "weighted path cost."
         )
-        print(
-            f"Lowest weighted path cost among successful results = {optimal_cost}."
-        )
+        print(f"Lowest weighted path cost among successful results = {optimal_cost}.")
     else:
         print("\nNo algorithm found a path to the exit.")
 
