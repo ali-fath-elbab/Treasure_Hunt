@@ -57,7 +57,6 @@ GRID_LINE = (46, 53, 66)
 EXPLORED = (70, 130, 200)
 PATH = (52, 190, 150)
 PATH_LINE = (110, 236, 196)
-TREASURE = (236, 200, 90)
 
 pygame.init()
 problem = TreasureHuntProblem()
@@ -462,8 +461,6 @@ def draw_maze():
             if draw_lines:
                 pygame.draw.rect(screen, GRID_LINE, rect, width=1)
 
-            if ch in {"0", "1", "2", "3"}:
-                pygame.draw.circle(screen, TREASURE, rect.center, max(2, CELL // 4))
 
     if len(path) > 1:
         points = [cell_center(s[0], s[1]) for s in path]
@@ -492,7 +489,6 @@ def draw_legend():
         ("dot", GREEN, "Start"),
         ("dot", ORANGE, "Goal"),
         ("dot", RED, "Current"),
-        ("dot", TREASURE, "Treasure"),
         ("box", blend(FLOOR, EXPLORED, 0.5), "Explored"),
         ("box", PATH, "Path"),
         ("box", SAND, "Sand (3)"),
