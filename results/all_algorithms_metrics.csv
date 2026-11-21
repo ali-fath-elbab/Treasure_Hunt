@@ -1,0 +1,10 @@
+Algorithm,Category,Found,Steps,Path_Cost,Nodes_Generated,Nodes_Expanded,Max_Frontier_Size,Execution_Time_ms
+BFS,Uninformed,True,78,102,3163,1101,38,2.9805
+DFS,Uninformed,True,386,516,1602,557,364,9.7606
+UCS,Uninformed,True,80,88,3163,1101,46,4.4429
+IDS,Uninformed,True,78,102,916254,332916,72,1073.7367
+Greedy Best-First,Heuristic,True,78,102,242,88,68,0.3897
+A*,Heuristic,True,80,88,2972,1028,201,4.5808
+Hill Climbing,Local Search,True,78,102,1164,393,1,1.6957
+Simulated Annealing,Local Search,True,142,186,4856,1594,1,5.9163
+Genetic Algorithm,Local Search,True,82,106,296,5,60,54.8278
