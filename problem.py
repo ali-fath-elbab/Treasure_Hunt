@@ -16,9 +16,44 @@ state because they do not affect the goal or legal movement.
 from collections import deque
 
 
+def _build_default_map(rows=40, cols=40):
+    """
+    Builds the default 40x40 map deterministically (no RNG, fully reproducible).
+
+    A regular wall lattice (vertical walls where c%4==3, horizontal walls where
+    r%4==3, with one-cell gaps) leaves the grid fully connected while producing
+    1,101 walkable cells, so the position-only state space is inside the required
+    1,000-10,000 range. Sand (cost 3) and mud (cost 5) are assigned by a fixed
+    arithmetic rule so the map never changes between runs.
+    """
+    grid = [["#" if ((c % 4 == 3 and r % 4 != 2) or (r % 4 == 3 and c % 4 != 2)) else "."
+             for c in range(cols)] for r in range(rows)]
+
+    grid[0][0] = "P"
+    grid[rows - 1][cols - 1] = "E"
+
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] != ".":
+                continue
+            key = r * 7 + c * 13
+            if key % 17 == 0:
+                grid[r][c] = "S"
+            elif key % 19 == 0:
+                grid[r][c] = "M"
+
+    for (r, c), label in [((5, 5), "0"), ((17, 25), "1"),
+                          ((29, 9), "2"), ((34, 33), "3")]:
+        if grid[r][c] in {".", "S", "M"}:
+            grid[r][c] = label
+
+    return ["".join(row) for row in grid]
+
+
 class TreasureHuntProblem:
     """Grid world, transition model, step costs, and goal test."""
 
+<<<<<<< HEAD
     DEFAULT_MAP = [
     "P..#.........0.",
     ".#.#.#....###..",
@@ -36,6 +71,9 @@ class TreasureHuntProblem:
     ".######.#######",
     "S......S....3.S",
     ]
+=======
+    DEFAULT_MAP = _build_default_map()
+>>>>>>> Dimensions
 
     def __init__(self, grid_lines=None):
         self.grid = [list(row) for row in (grid_lines or self.DEFAULT_MAP)]

@@ -1,18 +1,23 @@
 """
 Game.py
-Clean desktop-style Treasure Hunt search visualizer.
-Uses the existing problem.py and uninformed.py implementations.
+Live Pygame visualisation of the uninformed search algorithms on the
+Treasure Hunt grid defined in problem.py.
+
+The problem model (grid, actions, step costs, goal test) lives in problem.py,
+so the animation and the experimental results use exactly the same problem.
+
+UI: clean dark desktop-style dashboard (cards, status pill, stat tiles).
 """
 
 import ctypes
-import queue
+import heapq
 import sys
-import threading
+import time
+from collections import deque
 
 import pygame
 
 from problem import TreasureHuntProblem
-from uninformed import bfs, dfs, ucs, ids
 
 # Keep the window crisp on high-DPI Windows screens
 if sys.platform == "win32":
@@ -45,14 +50,20 @@ NEUTRAL = (38, 44, 55)
 TILE_BG = (32, 38, 49)
 
 FLOOR = (34, 40, 51)
+<<<<<<< HEAD
 SAND = (179, 139, 66)      # Sand - Cost 3
 MUD = (133, 91, 69)        # Mud - Cost 5
+=======
+SAND = (179, 139, 66)      # Sand - cost 3
+MUD = (133, 91, 69)        # Mud  - cost 5
+>>>>>>> Dimensions
 WALL = (10, 13, 18)
 GRID_LINE = (46, 53, 66)
 EXPLORED = (70, 130, 200)
 PATH = (52, 190, 150)
 PATH_LINE = (110, 236, 196)
 
+<<<<<<< HEAD
 TERRAIN_COLORS = {
     ".": FLOOR,
     "P": FLOOR,
@@ -73,7 +84,12 @@ TERRAIN_COLORS = {
 
 ALGORITHMS = {"BFS": bfs, "DFS": dfs, "UCS": ucs, "IDS": ids}
 
+=======
+>>>>>>> Dimensions
 pygame.init()
+problem = TreasureHuntProblem()
+ROWS, COLS = problem.rows, problem.cols
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Treasure Hunt - Search Visualizer")
 clock = pygame.time.Clock()
@@ -87,33 +103,7 @@ title_font = pygame.font.SysFont(FONT_NAMES, 28, bold=True)
 number_font = pygame.font.SysFont(FONT_NAMES, 24, bold=True)
 button_font = pygame.font.SysFont(FONT_NAMES, 15, bold=True)
 
-
-# ---------------------------------------------------------------------
-# Project state
-# ---------------------------------------------------------------------
-
-problem = TreasureHuntProblem()
-selected_algorithm = "BFS"
-events = queue.Queue()
-
-running_search = False
-paused = False
-finished = False
-error_message = None
-
-visited_counts = {}
-current_state = problem.get_initial_state()
-solution_states = []
-solution_actions = []
-
-nodes_expanded = 0
-nodes_generated = 0
-frontier_size = 0
-max_frontier_size = 0
-path_cost = 0
-execution_time_ms = 0.0
-
-speed = 3
+START = problem.get_initial_state()
 
 
 # ---------------------------------------------------------------------
@@ -122,17 +112,25 @@ speed = 3
 
 HEADER_H = 84
 MARGIN = 32
-CELL = 40
-
 GRID_X = MARGIN
 GRID_Y = HEADER_H + 26
-GRID_W = problem.cols * CELL
-GRID_H = problem.rows * CELL
+
+PANEL_MIN_W = 380
+CELL = max(
+    4,
+    min(
+        40,
+        (WIDTH - 2 * MARGIN - 40 - PANEL_MIN_W) // COLS,
+        (HEIGHT - GRID_Y - 80) // ROWS,
+    ),
+)
+GRID_W = COLS * CELL
+GRID_H = ROWS * CELL
 
 SIDE_X = GRID_X + GRID_W + 40
 SIDE_Y = GRID_Y - 5
 SIDE_W = WIDTH - SIDE_X - MARGIN
-SIDE_H = GRID_H + 10
+SIDE_H = HEIGHT - SIDE_Y - 30
 
 PAD = 24
 INNER_X = SIDE_X + PAD
@@ -148,8 +146,8 @@ def split_row(count, y, h, x=INNER_X, width=INNER_W, gap=GAP):
 
 # Section 1: algorithm
 ALGO_LABEL_Y = SIDE_Y + 20
-algo_rects = split_row(4, SIDE_Y + 54, 38)
-ALGO_RECTS = dict(zip(ALGORITHMS.keys(), algo_rects))
+ALGO_NAMES = ["BFS", "DFS", "UCS", "IDS"]
+ALGO_RECTS = dict(zip(ALGO_NAMES, split_row(4, SIDE_Y + 54, 38)))
 
 # Section 2: controls
 PLAY_RECT, PAUSE_RECT, RESET_RECT = split_row(3, SIDE_Y + 108, 40)
@@ -170,108 +168,252 @@ DETAILS_Y = SOLUTION_Y + 36
 
 
 # ---------------------------------------------------------------------
-# Search functions
+# Game state
 # ---------------------------------------------------------------------
 
-def clear_search_display():
-    global paused, finished, error_message
-    global current_state, solution_states, solution_actions
-    global nodes_expanded, nodes_generated, frontier_size
-    global max_frontier_size, path_cost, execution_time_ms
+algorithm = "BFS"
+explored = []
+path = []
+yielded_cells = set()
 
-    if running_search:
-        return
+running_search = False
+paused = False
+search_finished = False
+error_message = None
 
-    while True:
-        try:
-            events.get_nowait()
-        except queue.Empty:
-            break
+nodes_expanded = 0
+nodes_generated = 0
+frontier_size = 0
+max_frontier = 0
+path_cost = 0
+execution_time = 0.0
 
-    visited_counts.clear()
-    current_state = problem.get_initial_state()
-    solution_states = []
-    solution_actions = []
+steps_per_frame = 3
+search_generator = None
+search_start_time = 0.0
+
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def cell_of(state):
+    return (state[0], state[1])
+
+
+def emit(state):
+    """Yield a frame only on the first visit to a cell (keeps IDS watchable)."""
+    coord = cell_of(state)
+    if coord in yielded_cells:
+        return False
+    yielded_cells.add(coord)
+    return True
+
+
+def reconstruct_path(parent, current):
+    result = [current]
+    while current in parent:
+        current = parent[current]
+        result.append(current)
+    result.reverse()
+    return result
+
+
+def reset_search():
+    global running_search, paused, search_finished, error_message
+    global nodes_expanded, nodes_generated, frontier_size, max_frontier
+    global path_cost, execution_time
+    global explored, path, yielded_cells, search_generator
+
+    running_search = False
+    paused = False
+    search_finished = False
+    error_message = None
     nodes_expanded = 0
     nodes_generated = 0
     frontier_size = 0
-    max_frontier_size = 0
+    max_frontier = 0
     path_cost = 0
-    execution_time_ms = 0.0
-    paused = False
-    finished = False
-    error_message = None
+    execution_time = 0.0
+    explored = []
+    path = []
+    yielded_cells = set()
+    search_generator = None
+
+
+# ---------------------------------------------------------------------
+# Search algorithms
+# ---------------------------------------------------------------------
+
+def bfs():
+    global nodes_expanded, nodes_generated, frontier_size, max_frontier
+
+    frontier = deque([START])
+    parent = {}
+    visited = {START}
+    nodes_generated = 1
+
+    while frontier:
+        frontier_size = len(frontier)
+        max_frontier = max(max_frontier, frontier_size)
+        current = frontier.popleft()
+        nodes_expanded += 1
+
+        if emit(current):
+            explored.append(current)
+            yield current
+
+        if problem.is_goal(current):
+            return reconstruct_path(parent, current)
+
+        for _action, nxt, _cost in problem.get_successors(current):
+            nodes_generated += 1
+            if nxt not in visited:
+                visited.add(nxt)
+                parent[nxt] = current
+                frontier.append(nxt)
+
+    return []
+
+
+def dfs():
+    global nodes_expanded, nodes_generated, frontier_size, max_frontier
+
+    frontier = [START]
+    parent = {}
+    visited = {START}
+    nodes_generated = 1
+
+    while frontier:
+        frontier_size = len(frontier)
+        max_frontier = max(max_frontier, frontier_size)
+        current = frontier.pop()
+        nodes_expanded += 1
+
+        if emit(current):
+            explored.append(current)
+            yield current
+
+        if problem.is_goal(current):
+            return reconstruct_path(parent, current)
+
+        for _action, nxt, _cost in reversed(problem.get_successors(current)):
+            nodes_generated += 1
+            if nxt not in visited:
+                visited.add(nxt)
+                parent[nxt] = current
+                frontier.append(nxt)
+
+    return []
+
+
+def ucs():
+    global nodes_expanded, nodes_generated, frontier_size, max_frontier
+
+    counter = 0
+    frontier = [(0, counter, START)]
+    parent = {}
+    best_cost = {START: 0}
+    nodes_generated = 1
+
+    while frontier:
+        frontier_size = len(frontier)
+        max_frontier = max(max_frontier, frontier_size)
+        cost, _, current = heapq.heappop(frontier)
+
+        if cost > best_cost.get(current, float("inf")):
+            continue
+
+        nodes_expanded += 1
+        if emit(current):
+            explored.append(current)
+            yield current
+
+        if problem.is_goal(current):
+            return reconstruct_path(parent, current)
+
+        for _action, nxt, step_cost in problem.get_successors(current):
+            nodes_generated += 1
+            new_cost = cost + step_cost
+            if new_cost < best_cost.get(nxt, float("inf")):
+                best_cost[nxt] = new_cost
+                parent[nxt] = current
+                counter += 1
+                heapq.heappush(frontier, (new_cost, counter, nxt))
+
+    return []
+
+
+def ids(max_depth=250):
+    global nodes_expanded, nodes_generated, frontier_size, max_frontier
+
+    for depth_limit in range(max_depth + 1):
+        frontier = [(START, 0)]
+        parent = {}
+        min_depth = {START: 0}
+        nodes_generated += 1
+
+        while frontier:
+            frontier_size = len(frontier)
+            max_frontier = max(max_frontier, frontier_size)
+            current, depth = frontier.pop()
+            nodes_expanded += 1
+
+            if emit(current):
+                explored.append(current)
+                yield current
+
+            if problem.is_goal(current):
+                return reconstruct_path(parent, current)
+
+            if depth < depth_limit:
+                for _action, nxt, _cost in reversed(problem.get_successors(current)):
+                    nodes_generated += 1
+                    next_depth = depth + 1
+                    if next_depth < min_depth.get(nxt, float("inf")):
+                        min_depth[nxt] = next_depth
+                        parent[nxt] = current
+                        frontier.append((nxt, next_depth))
+
+    return []
+
+
+ALGORITHMS = {"BFS": bfs, "DFS": dfs, "UCS": ucs, "IDS": ids}
 
 
 def start_search():
-    global running_search, paused, finished, error_message
+    global running_search, search_generator, search_start_time
 
-    if running_search:
-        return
-
-    clear_search_display()
-    paused = False
-    finished = False
-    error_message = None
+    reset_search()
+    search_generator = ALGORITHMS[algorithm]()
+    search_start_time = time.perf_counter()
     running_search = True
-
-    algorithm = ALGORITHMS[selected_algorithm]
-
-    def trace(state, expanded_count, current_frontier):
-        events.put(("visit", state, expanded_count, current_frontier))
-
-    def worker():
-        try:
-            result = algorithm(problem, trace=trace)
-            events.put(("done", result))
-        except Exception as exc:
-            events.put(("error", str(exc)))
-
-    threading.Thread(target=worker, daemon=True).start()
 
 
 def update_search():
-    global current_state, nodes_expanded, frontier_size
-    global nodes_generated, max_frontier_size, path_cost
-    global execution_time_ms, solution_states, solution_actions
-    global running_search, finished, error_message
+    global path, path_cost, execution_time
+    global search_finished, running_search, error_message
 
-    if paused:
+    if not running_search or paused or search_finished:
         return
 
-    for _ in range(speed):
+    for _ in range(steps_per_frame):
         try:
-            item = events.get_nowait()
-        except queue.Empty:
+            next(search_generator)
+        except StopIteration as exc:
+            path = exc.value if exc.value else []
+            path_cost = sum(
+                problem.step_costs[problem.grid[s[0]][s[1]]] for s in path[1:]
+            )
+            execution_time = time.perf_counter() - search_start_time
+            search_finished = True
+            running_search = False
             break
-
-        if item[0] == "visit":
-            _, state, expanded, frontier = item
-            current_state = state
-            nodes_expanded = expanded
-            frontier_size = frontier
-            position = (state[0], state[1])
-            visited_counts[position] = visited_counts.get(position, 0) + 1
-            max_frontier_size = max(max_frontier_size, frontier_size)
-
-        elif item[0] == "done":
-            result = item[1]
+        except Exception as exc:
+            error_message = str(exc)
+            search_finished = True
             running_search = False
-            finished = True
-            nodes_generated = result["nodes_generated"]
-            nodes_expanded = result["nodes_expanded"]
-            max_frontier_size = result["max_frontier_size"]
-            path_cost = result["path_cost"]
-            execution_time_ms = result["execution_time_ms"]
-            solution_states = result["path_states"]
-            solution_actions = result["path_actions"]
-            if solution_states:
-                current_state = solution_states[-1]
-
-        elif item[0] == "error":
-            error_message = item[1]
-            running_search = False
-            finished = True
+            break
 
 
 # ---------------------------------------------------------------------
@@ -322,47 +464,51 @@ def cell_center(row, col):
 
 
 def draw_maze():
-    path_cells = {(s[0], s[1]) for s in solution_states}
+    path_cells = {cell_of(s) for s in path}
+    explored_cells = {cell_of(s) for s in explored}
 
     outer = pygame.Rect(GRID_X - 5, GRID_Y - 5, GRID_W + 10, GRID_H + 10)
     card(outer, CARD_BG, BORDER, 8)
 
-    for row in range(problem.rows):
-        for col in range(problem.cols):
-            cell_value = problem.grid[row][col]
+    draw_lines = CELL >= 8
+    for row in range(ROWS):
+        for col in range(COLS):
+            ch = problem.grid[row][col]
             rect = pygame.Rect(GRID_X + col * CELL, GRID_Y + row * CELL, CELL, CELL)
 
-            fill = TERRAIN_COLORS.get(cell_value, FLOOR)
-
-            if (row, col) in visited_counts and cell_value != "#":
-                count = visited_counts[(row, col)]
-                fill = blend(fill, EXPLORED, min(0.62, 0.22 + count * 0.035))
-
-            if (row, col) in path_cells and cell_value not in {"P", "E"}:
-                fill = blend(fill, PATH, 0.72)
+            if ch == "#":
+                fill = WALL
+            else:
+                fill = SAND if ch == "S" else MUD if ch == "M" else FLOOR
+                if (row, col) in explored_cells:
+                    fill = blend(fill, EXPLORED, 0.45)
+                if (row, col) in path_cells:
+                    fill = blend(fill, PATH, 0.72)
 
             pygame.draw.rect(screen, fill, rect)
-            pygame.draw.rect(screen, GRID_LINE, rect, width=1)
+            if draw_lines:
+                pygame.draw.rect(screen, GRID_LINE, rect, width=1)
 
-            if cell_value in ("K", "D"):
-                draw_text_centered(cell_value, rect, MUTED, small)
 
-    if len(solution_states) > 1:
-        points = [cell_center(s[0], s[1]) for s in solution_states]
-        pygame.draw.lines(screen, PATH_LINE, False, points, 3)
+    if len(path) > 1:
+        points = [cell_center(s[0], s[1]) for s in path]
+        pygame.draw.lines(screen, PATH_LINE, False, points, max(2, CELL // 8))
 
-    start = cell_center(*problem.start_pos)
-    pygame.draw.circle(screen, GREEN, start, 10)
-    pygame.draw.circle(screen, (255, 255, 255), start, 10, 2)
+    radius = max(4, min(10, CELL // 2 - 1))
+
+    start = cell_center(*cell_of(START))
+    pygame.draw.circle(screen, GREEN, start, radius)
+    pygame.draw.circle(screen, (255, 255, 255), start, radius, 2)
 
     goal = cell_center(*problem.exit_pos)
-    pygame.draw.circle(screen, ORANGE, goal, 10)
-    pygame.draw.circle(screen, (255, 255, 255), goal, 10, 2)
+    pygame.draw.circle(screen, ORANGE, goal, radius)
+    pygame.draw.circle(screen, (255, 255, 255), goal, radius, 2)
 
-    if running_search and current_state is not None:
-        current = cell_center(current_state[0], current_state[1])
-        pygame.draw.circle(screen, RED, current, 7)
-        pygame.draw.circle(screen, (255, 255, 255), current, 7, 2)
+    if running_search and explored:
+        current = cell_center(*cell_of(explored[-1]))
+        r = max(3, radius - 3)
+        pygame.draw.circle(screen, RED, current, r)
+        pygame.draw.circle(screen, (255, 255, 255), current, r, 2)
 
 
 def draw_legend():
@@ -373,17 +519,24 @@ def draw_legend():
         ("dot", RED, "Current"),
         ("box", blend(FLOOR, EXPLORED, 0.5), "Explored"),
         ("box", PATH, "Path"),
+        ("box", SAND, "Sand (3)"),
+        ("box", MUD, "Mud (5)"),
     ]
 
     x = GRID_X
+    limit = GRID_X + max(GRID_W, 480)
     for kind, color, label in entries:
+        item_w = 20 + small.size(label)[0] + 22
+        if x + item_w > limit and x != GRID_X:
+            x = GRID_X
+            y += 24
         if kind == "dot":
             pygame.draw.circle(screen, color, (x + 6, y + 8), 6)
         else:
             pygame.draw.rect(screen, color, (x, y + 2, 13, 13), border_radius=3)
             pygame.draw.rect(screen, GRID_LINE, (x, y + 2, 13, 13), 1, border_radius=3)
-        width = draw_text(label, x + 20, y, MUTED, tiny)
-        x += 20 + width + 22
+        draw_text(label, x + 20, y, MUTED, tiny)
+        x += item_w
 
 
 # ---------------------------------------------------------------------
@@ -401,11 +554,11 @@ def draw_header():
         status, status_color = "Paused", ORANGE
     elif running_search:
         status, status_color = "Searching", BLUE
-    elif finished and error_message:
+    elif search_finished and error_message:
         status, status_color = "Error", RED
-    elif finished and solution_states:
+    elif search_finished and path:
         status, status_color = "Goal reached", GREEN
-    elif finished:
+    elif search_finished:
         status, status_color = "No solution", RED
     else:
         status, status_color = "Ready", MUTED
@@ -424,36 +577,35 @@ def draw_right_panel():
     # Algorithm selection
     draw_text("Algorithm", INNER_X, ALGO_LABEL_Y, TEXT, heading)
     for name, rect in ALGO_RECTS.items():
-        if name == selected_algorithm:
-            button(name, rect, BLUE, (255, 255, 255), enabled=True)
-            if running_search:
-                pass
+        if name == algorithm:
+            button(name, rect, BLUE, (255, 255, 255))
         else:
-            button(name, rect, NEUTRAL, TEXT, enabled=not running_search)
+            button(name, rect, NEUTRAL, TEXT)
 
     # Main controls
     button("Play", PLAY_RECT, GREEN, (255, 255, 255), enabled=not running_search)
     button("Resume" if paused else "Pause", PAUSE_RECT, ORANGE, (255, 255, 255),
            enabled=running_search)
-    button("Reset", RESET_RECT, RED, (255, 255, 255), enabled=not running_search)
+    button("Reset", RESET_RECT, RED, (255, 255, 255))
 
     # Speed
     draw_text("Speed", INNER_X, SPEED_Y + 5, TEXT, heading)
     draw_text("events per frame", INNER_X + 66, SPEED_Y + 9, MUTED, tiny)
     button("-", MINUS_RECT, NEUTRAL)
     button("+", PLUS_RECT, NEUTRAL)
-    value_rect = pygame.Rect(MINUS_RECT.right, SPEED_Y, PLUS_RECT.x - MINUS_RECT.right, 32)
-    draw_text_centered(speed, value_rect, TEXT, button_font)
+    value_rect = pygame.Rect(MINUS_RECT.right, SPEED_Y,
+                             PLUS_RECT.x - MINUS_RECT.right, 32)
+    draw_text_centered(steps_per_frame, value_rect, TEXT, button_font)
 
     separator(SEP_1)
 
     # Statistics
     draw_text("Search statistics", INNER_X, STATS_Y, TEXT, heading)
     metrics = [
-        ("Expanded", nodes_expanded),
-        ("Generated", nodes_generated),
-        ("Frontier", frontier_size),
-        ("Max frontier", max_frontier_size),
+        ("Expanded", f"{nodes_expanded:,}"),
+        ("Generated", f"{nodes_generated:,}"),
+        ("Frontier", f"{frontier_size:,}"),
+        ("Max frontier", f"{max_frontier:,}"),
     ]
 
     tile_w = (INNER_W - GAP) // 2
@@ -470,10 +622,10 @@ def draw_right_panel():
     # Solution
     draw_text("Solution", INNER_X, SOLUTION_Y, TEXT, heading)
     details = [
-        ("Path length", len(solution_actions)),
+        ("Path length", max(len(path) - 1, 0)),
         ("Path cost", path_cost),
-        ("Execution time", f"{execution_time_ms:.3f} ms"),
-        ("Visited cells", len(visited_counts)),
+        ("Execution time", f"{execution_time * 1000:.3f} ms"),
+        ("Visited cells", len(explored)),
     ]
 
     col_w = INNER_W // 2
@@ -484,11 +636,11 @@ def draw_right_panel():
         draw_text(value, x + 112, y, TEXT, small)
 
     # Result message
-    if finished:
+    if search_finished:
         msg_y = SIDE_Y + SIDE_H - 36
         if error_message:
             draw_text("Error: " + error_message[:55], INNER_X, msg_y, RED, small)
-        elif solution_states:
+        elif path:
             draw_text("The exit has been reached.", INNER_X, msg_y, GREEN, small)
         else:
             draw_text("No route to the exit was found.", INNER_X, msg_y, RED, small)
@@ -499,7 +651,7 @@ def draw_right_panel():
 # ---------------------------------------------------------------------
 
 def main():
-    global selected_algorithm, paused, speed
+    global algorithm, paused, steps_per_frame
 
     running = True
     while running:
@@ -512,22 +664,29 @@ def main():
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = event.pos
 
-                if not running_search:
-                    for name, rect in ALGO_RECTS.items():
-                        if rect.collidepoint(pos):
-                            selected_algorithm = name
-                            clear_search_display()
+                for name, rect in ALGO_RECTS.items():
+                    if rect.collidepoint(pos) and name != algorithm:
+                        algorithm = name
+                        reset_search()
 
-                if PLAY_RECT.collidepoint(pos):
+                if PLAY_RECT.collidepoint(pos) and not running_search:
                     start_search()
                 elif PAUSE_RECT.collidepoint(pos) and running_search:
                     paused = not paused
                 elif RESET_RECT.collidepoint(pos):
-                    clear_search_display()
+                    reset_search()
                 elif MINUS_RECT.collidepoint(pos):
-                    speed = max(1, speed - 1)
+                    steps_per_frame = max(1, steps_per_frame - 1)
                 elif PLUS_RECT.collidepoint(pos):
-                    speed = min(40, speed + 1)
+                    steps_per_frame = min(40, steps_per_frame + 1)
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE and running_search:
+                    paused = not paused
+                elif event.key == pygame.K_UP:
+                    steps_per_frame = min(40, steps_per_frame + 1)
+                elif event.key == pygame.K_DOWN:
+                    steps_per_frame = max(1, steps_per_frame - 1)
 
         update_search()
 
