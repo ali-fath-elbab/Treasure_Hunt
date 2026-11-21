@@ -53,27 +53,7 @@ def _build_default_map(rows=40, cols=40):
 class TreasureHuntProblem:
     """Grid world, transition model, step costs, and goal test."""
 
-<<<<<<< HEAD
-    DEFAULT_MAP = [
-    "P..#.........0.",
-    ".#.#.#....###..",
-    "S#...#M...#1...",
-    ".###.####.#S##.",
-    "S.............S",
-    "##.###.####....",
-    "K....#....#...S",
-    "####.#.##M###.#",
-    "..S....#.......",
-    ".#####.#.#####.",
-    "...2.#......M..",
-    "####.####....##",
-    ".............E.",
-    ".######.#######",
-    "S......S....3.S",
-    ]
-=======
     DEFAULT_MAP = _build_default_map()
->>>>>>> Dimensions
 
     def __init__(self, grid_lines=None):
         self.grid = [list(row) for row in (grid_lines or self.DEFAULT_MAP)]
